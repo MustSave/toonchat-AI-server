@@ -1,9 +1,10 @@
-from transformers import StoppingCriteria
-from app.llm.constants import ModelType
-from app.models import SingletonMetaClass
-from threading import Thread
-from typing import Callable
 import torch
+from typing import Callable
+from threading import Thread
+from transformers import StoppingCriteria
+
+from app.models import SingletonMetaClass
+from app.llm.constants import ModelType
 
 
 class LLMConfig:
@@ -22,6 +23,20 @@ class LLMConfig:
         self.stopping_words = stopping_words
 
 
+class BaseLLM:
+    def generate(self, history: str, x: str, args: dict = None):
+        raise NotImplementedError
+
+
+class MockLLM(BaseLLM):
+    def generate(self, history: str, x: str, args: dict = None):
+        import time
+
+        for s in ["This", " is", " a", " mock", " result"]:
+            yield s
+            time.sleep(1)
+
+
 class StoppingCriteriaSub(StoppingCriteria):
     def __init__(self, stops=None, callback: Callable = None):
         super().__init__()
@@ -38,11 +53,12 @@ class StoppingCriteriaSub(StoppingCriteria):
         return False
 
 
-class LoadedLLM(metaclass=SingletonMetaClass):
+class LoadedLLM(BaseLLM, metaclass=SingletonMetaClass):
     from transformers import PreTrainedTokenizerBase, PreTrainedModel
 
     isLoaded = False
     isRunning = False
+    do_stop = False
 
     def __init__(
         self,
@@ -66,11 +82,17 @@ class LoadedLLM(metaclass=SingletonMetaClass):
                 for stop_word in stopping_words
             ]
             self.stopping_criteria = StoppingCriteriaList(
-                [StoppingCriteriaSub(stops=stop_words_ids, callback=self.on_stop_generate)]
+                [
+                    StoppingCriteriaSub(stops=stop_words_ids, callback=self.on_stop_generate),
+                    _StopEverythingStoppingCriteria(self),
+                ]
             )
 
     def on_stop_generate(self):
         self.isRunning = False
+
+    def stop_generate(self):
+        self.do_stop = True
 
     def generate(self, history, x, args: dict = None):
         # if self.isRunning:
@@ -78,7 +100,7 @@ class LoadedLLM(metaclass=SingletonMetaClass):
         generate_kwargs = (
             dict(
                 **self.tokenizer(
-                    f"{history}Human: {x}\nRemon:", return_tensors="pt", return_token_type_ids=False
+                    f"{history}\nRemon:", return_tensors="pt", return_token_type_ids=False
                 ).to(0),
                 max_time=20,  # 최대 생성 시간 (s)
                 streamer=self.streamer,
@@ -95,7 +117,20 @@ class LoadedLLM(metaclass=SingletonMetaClass):
             else args
         )
         self.isRunning = True
+        self.do_stop = False
         thread = Thread(target=self.model.generate, kwargs=generate_kwargs)
-        thread.start()
 
+        thread.start()
         return self.streamer
+
+
+class _StopEverythingStoppingCriteria(StoppingCriteria):
+    def __init__(self, loaded_llm: LoadedLLM) -> None:
+        self.loaded_llm = loaded_llm
+
+    def __call__(self, input_ids, scores) -> bool:
+        if self.loaded_llm.do_stop:
+            self.loaded_llm.do_stop = False
+            return True
+
+        return False

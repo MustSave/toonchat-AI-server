@@ -1,32 +1,13 @@
-from os.path import join
-from os import environ
-from typing import Any
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.constants import Environment
 
-
-class Config(BaseSettings):
+class CeleryConfig(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=join(environ["ROOT_DIR"], ".env"),
-        env_file_encoding="utf-8",
-        use_enum_values=True,
+        env_file=".env.celery", env_file_encoding="utf-8", extra="allow"
     )
 
-    REDIS_URL: str
-
-    SITE_DOMAIN: str
-
-    ENVIRONMENT: Environment
-
-    CORS_ORIGINS: list[str]
-    CORS_HEADERS: list[str]
-
-    APP_VERSION: str
+    BROKER_URI: str
+    BACKEND_URI: str | None
 
 
-settings = Config()
-
-app_configs: dict[str, Any] = {}
-app_configs["root_path"] = f"/v{settings.APP_VERSION}"
+config = CeleryConfig()
